@@ -111,6 +111,7 @@ Version 2.0
 
 Version 1.1
   - PHP 7 compatibility (mysqli_* replacing mysql_*)
+  - PHP7 patch author: mpaquet (https://github.com/mpaquet)
 
 Version 1.0
   - Added more comments to source files to allow easier modification
