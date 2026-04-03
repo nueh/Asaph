@@ -4,33 +4,40 @@ class DB {
 	public $sql;
 	public $numQueries = 0;
 
+	private $config;
+	private $driver;
 	private $link = null;
 	private $result = null;
 	private $lastError = null;
 	private $lastRowCount = 0;
-	private $host, $db, $user, $pass;
 
 
-	public function __construct( $host, $db, $user, $pass ) {
-		$this->host = $host;
-		$this->db = $db;
-		$this->user = $user;
-		$this->pass = $pass;
+	public function __construct( $config ) {
+		$this->config = $config;
+		$this->driver = $config['driver'] ?? 'mysql';
 	}
 
 
 	private function connect() {
-		$dsn = "mysql:host={$this->host};dbname={$this->db};charset=utf8";
-		$this->link = new PDO( $dsn, $this->user, $this->pass, [
+		$options = [
 			PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
 			PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-		]);
+		];
+
+		if( $this->driver === 'sqlite' ) {
+			$path = ASAPH_PATH . ($this->config['path'] ?? 'data/asaph.db');
+			$this->link = new PDO( 'sqlite:' . $path, null, null, $options );
+			$this->link->exec( 'PRAGMA journal_mode=WAL' );
+			$this->link->exec( 'PRAGMA foreign_keys=ON' );
+		} else {
+			$dsn = "mysql:host={$this->config['host']};dbname={$this->config['database']};charset=utf8";
+			$this->link = new PDO( $dsn, $this->config['user'], $this->config['password'], $options );
+		}
 	}
 
 
-	public function foundRows() {
-		$r = $this->query( 'SELECT FOUND_ROWS() AS foundRows' );
-		return $r[0]['foundRows'];
+	public function driver() {
+		return $this->driver;
 	}
 
 
@@ -102,15 +109,30 @@ class DB {
 	}
 
 
+	// Uses standard INSERT syntax compatible with both MySQL and SQLite
 	public function insertRow( $table, $insertFields ) {
-		$insertString = implode( ',', $this->quoteArray( $insertFields ) );
-		return $this->query( "INSERT INTO $table SET $insertString" );
+		$cols = '`' . implode( '`,`', array_keys($insertFields) ) . '`';
+		$vals = implode( ',', array_map( fn($v) => $this->quote($v), array_values($insertFields) ) );
+		return $this->query( "INSERT INTO $table ($cols) VALUES ($vals)" );
+	}
+
+
+	public function tableExists( $name ) {
+		if( $this->link === null ) {
+			$this->connect();
+		}
+		if( $this->driver === 'sqlite' ) {
+			$r = $this->query( "SELECT name FROM sqlite_master WHERE type='table' AND name=:1", $name );
+		} else {
+			$r = $this->query( "SHOW TABLES LIKE :1", $name );
+		}
+		return !empty( $r );
 	}
 
 
 	public function getError() {
 		if( $this->lastError ) {
-			return "MySQL reports: '{$this->lastError}' on query\n" . $this->sql;
+			return "Database reports: '{$this->lastError}' on query\n" . $this->sql;
 		}
 		return false;
 	}

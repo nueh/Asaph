@@ -23,13 +23,18 @@ class Asaph_Config {
 		'feed' => 'templates/rss.xml.php'
 	);
 
-	// Settings for your mysql database
+	// Database settings.
+	// Set driver to 'sqlite' for a file-based database (no server required),
+	// or 'mysql' to use a MySQL/MariaDB server.
 	public static $db = array(
-		'host' => 'localhost',
-		'database' => 'asaph',
-		'user' => 'root',
-		'password' => '',
-		'prefix' => 'asaph_'
+		'driver'   => 'sqlite',           // 'sqlite' or 'mysql'
+		'path'     => 'data/asaph.db',    // SQLite only: path relative to Asaph root
+
+		'host'     => 'localhost',         // MySQL only
+		'database' => 'asaph',            // MySQL only
+		'user'     => 'root',             // MySQL only
+		'password' => '',                 // MySQL only
+		'prefix'   => 'asaph_'
 	);
 
 	// Image and thumbnail settings

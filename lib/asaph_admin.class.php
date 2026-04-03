@@ -83,7 +83,7 @@ class Asaph_Admin extends Asaph {
 	public function getPost( $id ) {
 		$post = $this->db->getRow(
 			'SELECT
-				UNIX_TIMESTAMP(p.created) as created,
+				p.created,
 				p.id, p.source, p.thumb, p.image, p.title, u.name
 			FROM
 				'.ASAPH_TABLE_POSTS.' p
@@ -92,7 +92,7 @@ class Asaph_Admin extends Asaph {
 			WHERE
 				p.id = :1
 			ORDER BY
-				created DESC',
+				p.created DESC',
 			$id
 		);
 		if( empty($post) ) {
@@ -117,7 +117,7 @@ class Asaph_Admin extends Asaph {
 			$data['created'] = $created;
 
 			$initial = $this->db->getRow(
-				'SELECT UNIX_TIMESTAMP(created) as created, image, thumb
+				'SELECT created, image, thumb
 				FROM '.ASAPH_TABLE_POSTS.'
 				WHERE id = :1',
 				$id
@@ -125,7 +125,7 @@ class Asaph_Admin extends Asaph {
 
 			// OK, this sucks hard. If the date changed, we may have to move the thumb and image
 			// into another path and make sure to not overwrite any other imagess.
-			$initialPath = date( 'Y/m', $initial['created'] );
+			$initialPath = date( 'Y/m', strtotime($initial['created']) );
 			$newPath = date( 'Y/m', strtotime($created) );
 
 			if( $initialPath != $newPath && !empty($initial['thumb']) ) {
@@ -164,18 +164,20 @@ class Asaph_Admin extends Asaph {
 
 	public function deletePost( $id ) {
 		$post = $this->db->getRow(
-			'SELECT id, UNIX_TIMESTAMP(created) as created, thumb, image
+			'SELECT id, created, thumb, image
 			FROM '.ASAPH_TABLE_POSTS.'
 			WHERE id = :1',
 			$id
 		);
 
-		// Delete thumbnail an image from disk
+		$created = strtotime( $post['created'] );
+
+		// Delete thumbnail and image from disk
 		if( !empty($post['thumb']) ) {
 			$thumb =
 				ASAPH_PATH
 				.Asaph_Config::$images['thumbPath']
-				.date('Y/m/', $post['created'])
+				.date('Y/m/', $created)
 				.$post['thumb'];
 			@unlink( $thumb );
 		}
@@ -183,7 +185,7 @@ class Asaph_Admin extends Asaph {
 			$image =
 				ASAPH_PATH
 				.Asaph_Config::$images['imagePath']
-				.date('Y/m/', $post['created'])
+				.date('Y/m/', $created)
 				.$post['image'];
 			@unlink( $image );
 		}

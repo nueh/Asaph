@@ -9,41 +9,97 @@ require_once( ASAPH_PATH.'lib/db.class.php' );
 
 header( 'Content-type: text/html; charset=utf-8' );
 
-$createTablesSQL = array(
-	'CREATE TABLE `'.ASAPH_TABLE_POSTS.'` (
-		`id` int(11) NOT NULL auto_increment,
-		`userId` int(11) NOT NULL,
-		`hash` char(32) NOT NULL,
-		`created` datetime NOT NULL,
-		`source` varchar(255) NOT NULL,
-		`thumb` varchar(255) NOT NULL,
-		`image` varchar(255) NOT NULL,
-		`title` text NOT NULL,
-		PRIMARY KEY  (`id`)
-	) ENGINE=InnoDB CHARSET=utf8mb4',
+$driver = Asaph_Config::$db['driver'] ?? 'mysql';
 
-	'CREATE TABLE `'.ASAPH_TABLE_USERS.'` (
-		`id` int(11) NOT NULL auto_increment,
-		`name` varchar(255) NOT NULL,
-		`pass` varchar(255) NOT NULL,
-		`loginId` char(32) NOT NULL,
-		PRIMARY KEY  (`id`)
-	) ENGINE=InnoDB CHARSET=utf8mb4',
-);
+// Driver-specific CREATE TABLE statements
+if( $driver === 'sqlite' ) {
+	$createTablesSQL = array(
+		'CREATE TABLE `'.ASAPH_TABLE_POSTS.'` (
+			`id` INTEGER PRIMARY KEY AUTOINCREMENT,
+			`userId` INTEGER NOT NULL,
+			`hash` TEXT NOT NULL,
+			`created` TEXT NOT NULL,
+			`source` TEXT NOT NULL,
+			`thumb` TEXT NOT NULL,
+			`image` TEXT NOT NULL,
+			`title` TEXT NOT NULL
+		)',
 
-
-// Attempt a PDO connection once for all database requirement checks
-$pdoConnection = null;
-$pdoError = null;
-try {
-	$pdoConnection = new PDO(
-		'mysql:host='.Asaph_Config::$db['host'].';dbname='.Asaph_Config::$db['database'].';charset=utf8',
-		Asaph_Config::$db['user'],
-		Asaph_Config::$db['password'],
-		[ PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION ]
+		'CREATE TABLE `'.ASAPH_TABLE_USERS.'` (
+			`id` INTEGER PRIMARY KEY AUTOINCREMENT,
+			`name` TEXT NOT NULL,
+			`pass` TEXT NOT NULL,
+			`loginId` TEXT NOT NULL
+		)',
 	);
+} else {
+	$createTablesSQL = array(
+		'CREATE TABLE `'.ASAPH_TABLE_POSTS.'` (
+			`id` int(11) NOT NULL auto_increment,
+			`userId` int(11) NOT NULL,
+			`hash` char(32) NOT NULL,
+			`created` datetime NOT NULL,
+			`source` varchar(255) NOT NULL,
+			`thumb` varchar(255) NOT NULL,
+			`image` varchar(255) NOT NULL,
+			`title` text NOT NULL,
+			PRIMARY KEY  (`id`)
+		) ENGINE=InnoDB CHARSET=utf8mb4',
+
+		'CREATE TABLE `'.ASAPH_TABLE_USERS.'` (
+			`id` int(11) NOT NULL auto_increment,
+			`name` varchar(255) NOT NULL,
+			`pass` varchar(255) NOT NULL,
+			`loginId` char(32) NOT NULL,
+			PRIMARY KEY  (`id`)
+		) ENGINE=InnoDB CHARSET=utf8mb4',
+	);
+}
+
+
+// Attempt a connection for requirement checks
+$dbConnection = null;
+$dbError = null;
+try {
+	$dbConnection = new DB( Asaph_Config::$db );
+	// Force connect by running a trivial query
+	$dbConnection->query( $driver === 'sqlite' ? 'SELECT 1' : 'SELECT 1' );
 } catch( PDOException $e ) {
-	$pdoError = $e->getMessage();
+	$dbError = $e->getMessage();
+	$dbConnection = null;
+}
+
+// Build requirements based on driver
+if( $driver === 'sqlite' ) {
+	$dbPath = ASAPH_PATH . (Asaph_Config::$db['path'] ?? 'data/asaph.db');
+	$dbDir  = dirname( $dbPath );
+	$dbRequirements = array(
+		'SQLite database directory is writeable' => array(
+			'message' => 'Make sure PHP can write to <code>'.htmlspecialchars($dbDir).'</code>. '
+				. 'The database file will be created there.',
+			'value' => is_dir($dbDir) && is_writeable($dbDir)
+		),
+		'PDO SQLite extension installed' => array(
+			'message' => 'The <code>pdo_sqlite</code> PHP extension is required.',
+			'value' => in_array( 'sqlite', PDO::getAvailableDrivers() )
+		),
+	);
+} else {
+	$dbRequirements = array(
+		'Connection established' => array(
+			'message' => 'Check your database settings in <code>lib/asaph_config.class.php</code>'
+				. ( $dbError ? ': '.$dbError : '' ),
+			'value' => ( $dbConnection !== null )
+		),
+		'MySQL Version >= 5.7' => array(
+			'value' => $dbConnection && version_compare(
+				(new PDO(
+					'mysql:host='.Asaph_Config::$db['host'].';dbname='.Asaph_Config::$db['database'],
+					Asaph_Config::$db['user'], Asaph_Config::$db['password']
+				))->getAttribute( PDO::ATTR_SERVER_VERSION ), '5.7'
+			) !== -1
+		),
+	);
 }
 
 $requirements = array(
@@ -54,18 +110,7 @@ $requirements = array(
 		),
 	),
 
-	'Database' => array(
-		'Connection established' => array(
-			'message' => 'Check your database settings in <code>lib/asaph_config.class.php</code>'.
-				( $pdoError ? ': '.$pdoError : '' ),
-			'value' => ( $pdoConnection !== null )
-		),
-		'MySQL Version >= 5.7' => array(
-			'value' => $pdoConnection && version_compare(
-				$pdoConnection->getAttribute( PDO::ATTR_SERVER_VERSION ), '5.7'
-			) !== -1
-		),
-	),
+	'Database' => $dbRequirements,
 
 	'PHP' => array(
 		'cURL or URL fopen wrappers enabled' => array(
@@ -122,7 +167,6 @@ foreach( array_keys($requirements) as $i ) {
 }
 
 
-
 function humanToBytes( $s ) {
 	$s = trim( $s );
 	$last = strtolower( $s[strlen($s)-1] );
@@ -143,15 +187,9 @@ function iniEnabled( $s ) {
 }
 
 function installAsaph( $adminName, $adminPass, &$sql, &$errors ) {
-	$db = new DB(
-		Asaph_Config::$db['host'],
-		Asaph_Config::$db['database'],
-		Asaph_Config::$db['user'],
-		Asaph_Config::$db['password']
-	);
+	$db = new DB( Asaph_Config::$db );
 
-	$tables = $db->query( 'SHOW TABLES LIKE "'.ASAPH_TABLE_POSTS.'"' );
-	if( !empty($tables) ) {
+	if( $db->tableExists( ASAPH_TABLE_POSTS ) ) {
 		$errors['table-exists'] = true;
 		return false;
 	}
@@ -164,14 +202,13 @@ function installAsaph( $adminName, $adminPass, &$sql, &$errors ) {
 	}
 
 	$db->insertRow( ASAPH_TABLE_USERS, array(
-		'name' => $adminName,
-		'pass' => password_hash( $adminPass, PASSWORD_DEFAULT ),
+		'name'    => $adminName,
+		'pass'    => password_hash( $adminPass, PASSWORD_DEFAULT ),
 		'loginId' => ''
 	));
 
 	return true;
 }
-
 
 
 $mode = 'check';
@@ -220,6 +257,7 @@ if(
 		<p>
 			The following is the result of a short system check. <strong>All requirements must be met in order to
 			install Asaph.</strong>
+			Database driver: <strong><?php echo htmlspecialchars($driver); ?></strong>
 		</p>
 
 		<h1>Requirements</h1>

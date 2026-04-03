@@ -118,15 +118,32 @@ Key settings:
 
 ## Database
 
+Two drivers are supported, selected via `Asaph_Config::$db['driver']`:
+
+| Driver | When to use |
+|---|---|
+| `sqlite` (default) | Single-server installs, no DB server required; database is a file at `$db['path']` |
+| `mysql` | Multi-server or existing MySQL/MariaDB deployments |
+
 - Custom prepared-statement system built on PDO. Placeholders use `:1`, `:2`, etc.; internally resolved via `preg_replace_callback` before executing via `PDO::query`.
+- All SQL in the application is driver-agnostic: no `UNIX_TIMESTAMP()`, no `SQL_CALC_FOUND_ROWS`. Datetime values are stored/retrieved as strings and converted with `strtotime()` in PHP.
+- `DB::insertRow()` uses standard `INSERT INTO (cols) VALUES (vals)` syntax — never MySQL's `INSERT INTO SET`.
 - Database initialized by running `/admin/install.php` once; delete the file after use.
 - Table prefix configured via `Asaph_Config::$db['prefix']`.
-- Tables use `ENGINE=InnoDB` and `CHARSET=utf8mb4`.
+- MySQL tables use `ENGINE=InnoDB` and `CHARSET=utf8mb4`.
 
 Example query pattern in `db.class.php`:
 ```php
 $this->db->query('SELECT * FROM posts WHERE id = :1', array($id));
 ```
+
+### Migrating from MySQL to SQLite
+
+1. Set `driver => 'sqlite'` (and optionally `path`) in `lib/asaph_config.class.php`
+2. Run `admin/install.php` to create the SQLite tables
+3. Visit `admin/migrate_from_mysql.php` — enter the old MySQL credentials and click Migrate
+4. If any users have legacy md5 passwords, run `admin/migrate_passwords.php` afterwards
+5. Delete both migration scripts from the server
 
 ---
 
@@ -162,6 +179,7 @@ To create a new theme:
 - **Tokens**: Use `bin2hex(random_bytes(16))` for session/login tokens. Never use `md5(uniqid(rand()))`.
 - **Cookies**: Use the array-options form of `setcookie()` with `httponly => true` and `samesite => 'Lax'`.
 - **Database**: Use the `DB` class (PDO-backed); never call `mysql_*` or `mysqli_*` functions directly.
+- **Driver-agnostic SQL**: Do not use `UNIX_TIMESTAMP()`, `SQL_CALC_FOUND_ROWS`, `FOUND_ROWS()`, or `INSERT INTO t SET`. Use `strtotime()` in PHP for datetime conversion and `SELECT COUNT(*)` for totals.
 
 ---
 
