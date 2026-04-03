@@ -3,114 +3,141 @@
 class DB {
 	public $sql;
 	public $numQueries = 0;
-	
+
+	private $config;
+	private $driver;
 	private $link = null;
-	private $result;
-	private $host, $db, $user, $pass;
-	
-	
-	public function __construct( $host, $db, $user, $pass) {
-		$this->host = $host;
-		$this->db = $db;
-		$this->user = $user;
-		$this->pass = $pass;
+	private $result = null;
+	private $lastError = null;
+	private $lastRowCount = 0;
+
+
+	public function __construct( $config ) {
+		$this->config = $config;
+		$this->driver = $config['driver'] ?? 'mysql';
 	}
-	
-	
+
+
 	private function connect() {
-		$this->link = @mysqli_connect( $this->host, $this->user, $this->pass )
-			or die( "Couldn't establish link to database-server: ".$this->host );
-		mysqli_select_db( $this->link, $this->db )
-			or die( "Couldn't select Database: ".$this->db );
-		mysqli_query( $this->link, 'SET NAMES utf8' );
+		$options = [
+			PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+			PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+		];
+
+		if( $this->driver === 'sqlite' ) {
+			$path = ASAPH_PATH . ($this->config['path'] ?? 'data/asaph.db');
+			$this->link = new PDO( 'sqlite:' . $path, null, null, $options );
+			$this->link->exec( 'PRAGMA journal_mode=WAL' );
+			$this->link->exec( 'PRAGMA foreign_keys=ON' );
+		} else {
+			$dsn = "mysql:host={$this->config['host']};dbname={$this->config['database']};charset=utf8";
+			$this->link = new PDO( $dsn, $this->config['user'], $this->config['password'], $options );
+		}
 	}
-	
-	
-	public function foundRows() {
-		$r = $this->query( 'SELECT FOUND_ROWS() AS foundRows' );
-		return $r[0]['foundRows'];
+
+
+	public function driver() {
+		return $this->driver;
 	}
-	
-	
+
+
 	public function numRows() {
-		return mysqli_num_rows( $this->result );
+		return $this->lastRowCount;
 	}
-	
-	
+
+
 	public function affectedRows() {
-		return mysqli_affected_rows( $this->result );
+		return $this->result ? $this->result->rowCount() : 0;
 	}
-	
-	
+
+
 	public function insertId() {
-		return mysqli_insert_id( $this->link );
+		return $this->link ? $this->link->lastInsertId() : 0;
 	}
-	
-	
-	public function query( $q, $params = array() ) {
+
+
+	public function query( $q, $params = [] ) {
 		if( $this->link === null ) {
 			$this->connect();
 		}
-		
+
 		if( !is_array( $params ) ) {
 			$params = array_slice( func_get_args(), 1 );
 		}
-		
+
 		if( !empty( $params ) ) {
-			$q = preg_replace_callback('/:(\d+)/', function ($matches) use ($params) {
-                return $this->quote($params[$matches[1] - 1]);
-            }, $q );
+			$q = preg_replace_callback( '/:(\d+)/', function( $matches ) use ( $params ) {
+				return $this->quote( $params[$matches[1] - 1] );
+			}, $q );
 		}
+
 		$this->numQueries++;
 		$this->sql = $q;
-        $this->result = mysqli_query( $this->link, $q );
-		
-		if( !$this->result ) {
+		$this->lastError = null;
+
+		try {
+			$this->result = $this->link->query( $q );
+		} catch( PDOException $e ) {
+			$this->lastError = $e->getMessage();
 			return false;
 		}
-		else if( !$this->result instanceof mysqli_result ) {
+
+		if( $this->result->columnCount() === 0 ) {
 			return true;
 		}
-		
-		$rset = array();
-		while ( $row = mysqli_fetch_assoc( $this->result ) ) {
-			$rset[] = $row;
-		}
+
+		$rset = $this->result->fetchAll();
+		$this->lastRowCount = count( $rset );
 		return $rset;
 	}
-	
-	
-	public function getRow( $q, $params = array() ) {
+
+
+	public function getRow( $q, $params = [] ) {
 		if( !is_array( $params ) ) {
 			$params = array_slice( func_get_args(), 1 );
 		}
-		
+
 		$r = $this->query( $q, $params );
 		return array_shift( $r );
 	}
-	
-	
+
+
 	public function updateRow( $table, $idFields, $updateFields ) {
 		$updateString = implode( ',', $this->quoteArray( $updateFields ) );
 		$idString = implode( ' AND ', $this->quoteArray( $idFields ) );
 		return $this->query( "UPDATE $table SET $updateString WHERE $idString" );
 	}
-	
-	
+
+
+	// Uses standard INSERT syntax compatible with both MySQL and SQLite
 	public function insertRow( $table, $insertFields ) {
-		$insertString = implode( ',', $this->quoteArray( $insertFields ) );
-		return $this->query( "INSERT INTO $table SET $insertString" );
+		$cols = '`' . implode( '`,`', array_keys($insertFields) ) . '`';
+		$vals = implode( ',', array_map( fn($v) => $this->quote($v), array_values($insertFields) ) );
+		return $this->query( "INSERT INTO $table ($cols) VALUES ($vals)" );
 	}
-	
-	
+
+
+	public function tableExists( $name ) {
+		if( $this->link === null ) {
+			$this->connect();
+		}
+		if( $this->driver === 'sqlite' ) {
+			$r = $this->query( "SELECT name FROM sqlite_master WHERE type='table' AND name=:1", $name );
+		} else {
+			$r = $this->query( "SHOW TABLES LIKE :1", $name );
+		}
+		return !empty( $r );
+	}
+
+
 	public function getError() {
-		if( $e = mysqli_error( $this->link ) ) {
-			return "MySQL reports: '$e' on query\n".$this->sql;
+		if( $this->lastError ) {
+			return "Database reports: '{$this->lastError}' on query\n" . $this->sql;
 		}
 		return false;
 	}
-	
-	
+
+
 	public function quote( $s ) {
 		if( $this->link === null ) {
 			$this->connect();
@@ -125,15 +152,15 @@ class DB {
 			return $s;
 		}
 		else {
-			return "'".mysqli_real_escape_string( $this->link, $s )."'";
+			return $this->link->quote( $s );
 		}
 	}
-	
-	
+
+
 	public function quoteArray( &$fields ) {
-		$r = array();
+		$r = [];
 		foreach( $fields as $key => &$value ) {
-			$r[] = "`$key`=".$this->quote( $value );
+			$r[] = "`$key`=" . $this->quote( $value );
 		}
 		return $r;
 	}

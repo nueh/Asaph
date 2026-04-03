@@ -153,7 +153,7 @@ class Asaph_Post extends Asaph_Admin {
 	
 	private function createThumb( $imgPath, $thumbPath, $thumbWidth, $thumbHeight, $quality ) {
 		// Get image type and size and check if we can handle it
-		list( $srcWidth, $srcHeight, $type ) = getimagesize( $imgPath );
+		[ $srcWidth, $srcHeight, $type ] = getimagesize( $imgPath );
 		if( 
 			$srcWidth < 1 || $srcWidth > 4096
 			|| $srcHeight < 1 || $srcHeight > 4096

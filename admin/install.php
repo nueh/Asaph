@@ -1,7 +1,6 @@
 <?php
-if( version_compare(PHP_VERSION, '5.0.0') == -1 ) {
-	// probably useless, because PHP 4 wont parse this document.
-	die( "You need at least PHP 5.0.0 to run Asaph. Your current PHP version is ".PHP_VERSION );
+if( version_compare(PHP_VERSION, '8.0.0') === -1 ) {
+	die( "You need at least PHP 8.0.0 to run Asaph. Your current PHP version is ".PHP_VERSION );
 }
 define( 'ASAPH_PATH', '../' );
 
@@ -10,27 +9,98 @@ require_once( ASAPH_PATH.'lib/db.class.php' );
 
 header( 'Content-type: text/html; charset=utf-8' );
 
-$createTablesSQL = array(
-	'CREATE TABLE `'.ASAPH_TABLE_POSTS.'` (
-		`id` int(11) NOT NULL auto_increment,
-		`userId` int(11) NOT NULL,
-		`hash` char(32) NOT NULL,
-		`created` datetime NOT NULL,
-		`source` varchar(255) NOT NULL,
-		`thumb` varchar(255) NOT NULL,
-		`image` varchar(255) NOT NULL,
-		`title` text NOT NULL,
-		PRIMARY KEY  (`id`)
-	) ENGINE=MyISAM CHARSET=utf8',
-	
-	'CREATE TABLE `'.ASAPH_TABLE_USERS.'` (
-		`id` int(11) NOT NULL auto_increment,
-		`name` varchar(255) NOT NULL,
-		`pass` char(32) NOT NULL,
-		`loginId` char(32) NOT NULL,
-		PRIMARY KEY  (`id`)
-	) ENGINE=MyISAM CHARSET=utf8',
-);
+$driver = Asaph_Config::$db['driver'] ?? 'mysql';
+
+// Driver-specific CREATE TABLE statements
+if( $driver === 'sqlite' ) {
+	$createTablesSQL = array(
+		'CREATE TABLE `'.ASAPH_TABLE_POSTS.'` (
+			`id` INTEGER PRIMARY KEY AUTOINCREMENT,
+			`userId` INTEGER NOT NULL,
+			`hash` TEXT NOT NULL,
+			`created` TEXT NOT NULL,
+			`source` TEXT NOT NULL,
+			`thumb` TEXT NOT NULL,
+			`image` TEXT NOT NULL,
+			`title` TEXT NOT NULL
+		)',
+
+		'CREATE TABLE `'.ASAPH_TABLE_USERS.'` (
+			`id` INTEGER PRIMARY KEY AUTOINCREMENT,
+			`name` TEXT NOT NULL,
+			`pass` TEXT NOT NULL,
+			`loginId` TEXT NOT NULL
+		)',
+	);
+} else {
+	$createTablesSQL = array(
+		'CREATE TABLE `'.ASAPH_TABLE_POSTS.'` (
+			`id` int(11) NOT NULL auto_increment,
+			`userId` int(11) NOT NULL,
+			`hash` char(32) NOT NULL,
+			`created` datetime NOT NULL,
+			`source` varchar(255) NOT NULL,
+			`thumb` varchar(255) NOT NULL,
+			`image` varchar(255) NOT NULL,
+			`title` text NOT NULL,
+			PRIMARY KEY  (`id`)
+		) ENGINE=InnoDB CHARSET=utf8mb4',
+
+		'CREATE TABLE `'.ASAPH_TABLE_USERS.'` (
+			`id` int(11) NOT NULL auto_increment,
+			`name` varchar(255) NOT NULL,
+			`pass` varchar(255) NOT NULL,
+			`loginId` char(32) NOT NULL,
+			PRIMARY KEY  (`id`)
+		) ENGINE=InnoDB CHARSET=utf8mb4',
+	);
+}
+
+
+// Attempt a connection for requirement checks
+$dbConnection = null;
+$dbError = null;
+try {
+	$dbConnection = new DB( Asaph_Config::$db );
+	// Force connect by running a trivial query
+	$dbConnection->query( $driver === 'sqlite' ? 'SELECT 1' : 'SELECT 1' );
+} catch( PDOException $e ) {
+	$dbError = $e->getMessage();
+	$dbConnection = null;
+}
+
+// Build requirements based on driver
+if( $driver === 'sqlite' ) {
+	$dbPath = ASAPH_PATH . (Asaph_Config::$db['path'] ?? 'data/asaph.db');
+	$dbDir  = dirname( $dbPath );
+	$dbRequirements = array(
+		'SQLite database directory is writeable' => array(
+			'message' => 'Make sure PHP can write to <code>'.htmlspecialchars($dbDir).'</code>. '
+				. 'The database file will be created there.',
+			'value' => is_dir($dbDir) && is_writeable($dbDir)
+		),
+		'PDO SQLite extension installed' => array(
+			'message' => 'The <code>pdo_sqlite</code> PHP extension is required.',
+			'value' => in_array( 'sqlite', PDO::getAvailableDrivers() )
+		),
+	);
+} else {
+	$dbRequirements = array(
+		'Connection established' => array(
+			'message' => 'Check your database settings in <code>lib/asaph_config.class.php</code>'
+				. ( $dbError ? ': '.$dbError : '' ),
+			'value' => ( $dbConnection !== null )
+		),
+		'MySQL Version >= 5.7' => array(
+			'value' => $dbConnection && version_compare(
+				(new PDO(
+					'mysql:host='.Asaph_Config::$db['host'].';dbname='.Asaph_Config::$db['database'],
+					Asaph_Config::$db['user'], Asaph_Config::$db['password']
+				))->getAttribute( PDO::ATTR_SERVER_VERSION ), '5.7'
+			) !== -1
+		),
+	);
+}
 
 $requirements = array(
 	'File Access' => array(
@@ -39,21 +109,9 @@ $requirements = array(
 			'value' => @is_writeable( ASAPH_PATH.'data' )
 		),
 	),
-	
-	'Database' => array(
-		'Connection established' => array(
-			'message' => 'Check your database settings in <code>lib/asaph_config.class.php</code>',
-			'value' => $link = @mysqli_connect( Asaph_Config::$db['host'], Asaph_Config::$db['user'], Asaph_Config::$db['password'] )
-		),
-		'MySQL Version >= 4.0' => array(
-			'value' => ( version_compare(@mysqli_get_server_info( $link ),'4.0') != -1 )
-		),
-		'Database exists' => array(
-			'message' => 'The database Asaph will be installed in must already exist. The installer will not attempt to create it.',
-			'value' => @mysqli_select_db( $link, Asaph_Config::$db['database'] )
-		)
-	),
-	
+
+	'Database' => $dbRequirements,
+
 	'PHP' => array(
 		'cURL or URL fopen wrappers enabled' => array(
 			'message' => 'Asaph needs <code>cURL</code> or <code>allow_url_fopen</code> to be enabled to copy images from other sites.',
@@ -74,14 +132,14 @@ $suggestedPath = preg_replace( '#admin/install.php$#i', '', $_SERVER['SCRIPT_NAM
 $recommendations = array(
 	'Asaph Config' => array(
 		'Correct hostname set' => array(
-			'message' => 
+			'message' =>
 				'Make sure your <code>Asaph_Config::$domain</code> setting is correct. Environment variables '
 				.'indicate a value of &quot;<code>'.$_SERVER['HTTP_HOST'].'</code>&quot;. If '
 				.'<code>Asaph_Config::$domain</code> is not correctly set, you won\'t be able to use the bookmarklet.',
 			'value' => ( $_SERVER['HTTP_HOST'] == Asaph_Config::$domain )
 		),
 		'Correct path set' => array(
-			'message' => 
+			'message' =>
 				'Make sure your <code>Asaph_Config::$absolutePath</code> setting is correct. Environment variables '
 				.'indicate a value of &quot;<code>'.htmlspecialchars($suggestedPath).'</code>&quot;. If '
 				.'<code>Asaph_Config::$absolutePath</code> is not correctly set, you won\'t be able to use the bookmarklet.',
@@ -89,28 +147,8 @@ $recommendations = array(
 		)
 	),
 	'PHP Settings' => array(
-		'Safe Mode deactivated' => array(
-			'message' => 
-				'It is strongly recommended to disable <code>safe_mode</code>. If safe_mode is on, you\'re very likely to '
-				.'encounter problems when posting images. You might want to ask Google about '
-				.'&quot;<a href="http://www.google.com/search?q=safe_mode+mkdir">safe_mode mkdir</a>&quot; and '
-				.'&quot;<a href="http://www.google.com/search?q=chmod+setuid">chmod setuid</a>&quot;.',
-			'value' => !iniEnabled( 'safe_mode' )
-		),
-		'Magic Quotes deactivated' => array(
-			'message' => 
-				'If <code>magic_quotes_gpc</code> is enabled, Asaph will have to do some extra work to revert this '
-				.'stupid behaviour. Turn it off!',
-			'value' => !iniEnabled( 'magic_quotes_gpc' )
-		),
-		'Register Globals deactivated' => array(
-			'message' => 
-				'Though there is no known problem with Asaph and the <code>register_globals</code> option, it is '
-				.'generally a good idea to turn it off.',
-			'value' => !iniEnabled( 'register_globals' )
-		 ),
 		'Memory limit >= 4M' => array(
-			'message' => 
+			'message' =>
 				'If your <code>memory_limit</code> setting is too low, you might experience problems when posting '
 				.'large images. For instance, PHP needs about 6mb of RAM to create a thumbnail from a 1600x1280 image.',
 			'value' => ( humanToBytes(ini_get( 'memory_limit' )) > humanToBytes('4M') )
@@ -129,64 +167,56 @@ foreach( array_keys($requirements) as $i ) {
 }
 
 
-
 function humanToBytes( $s ) {
 	$s = trim( $s );
-	$last = strtolower( $s{strlen($s)-1} );
+	$last = strtolower( $s[strlen($s)-1] );
 	switch( $last ) {
 		case 'g': $s *= 1024;
 		case 'm': $s *= 1024;
 		case 'k': $s *= 1024;
 	}
-	
+
     return $s;
 }
 
 function iniEnabled( $s ) {
-	return in_array( 
-		strtolower( ini_get( $s ) ), 
-		array( 'on', '1', 'true', 'yes' ) 
+	return in_array(
+		strtolower( ini_get( $s ) ),
+		array( 'on', '1', 'true', 'yes' )
 	);
 }
 
 function installAsaph( $adminName, $adminPass, &$sql, &$errors ) {
-	$db = new DB(
-		Asaph_Config::$db['host'],
-		Asaph_Config::$db['database'],
-		Asaph_Config::$db['user'],
-		Asaph_Config::$db['password']
-	);
-	
-	$tables = $db->query( 'SHOW TABLES LIKE "'.ASAPH_TABLE_POSTS.'"' );
-	if( !empty($tables) ) {
+	$db = new DB( Asaph_Config::$db );
+
+	if( $db->tableExists( ASAPH_TABLE_POSTS ) ) {
 		$errors['table-exists'] = true;
 		return false;
 	}
-	
+
 	foreach( $sql as $q ) {
 		if( !$db->query($q) ) {
 			$errors['sql-error'] = $db->getError();
 			return false;
 		}
 	}
-	
+
 	$db->insertRow( ASAPH_TABLE_USERS, array(
-		'name' => $adminName,
-		'pass' => md5($adminPass),
+		'name'    => $adminName,
+		'pass'    => password_hash( $adminPass, PASSWORD_DEFAULT ),
 		'loginId' => ''
 	));
-	
+
 	return true;
 }
 
 
-
 $mode = 'check';
 $errors = array();
-if( 
-	isset($_POST['install']) && 
-	!empty($_POST['name']) && 
-	!empty($_POST['pass']) && 
+if(
+	isset($_POST['install']) &&
+	!empty($_POST['name']) &&
+	!empty($_POST['pass']) &&
 	!empty($_POST['pass2'])
 ) {
 	if( $_POST['pass'] == $_POST['pass2'] ) {
@@ -202,8 +232,7 @@ if(
 } else if( isset($_POST['install']) ) {
 	$errors['missing-data'] = true;
 }
- 
-?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+ ?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html>
 <head>
 	<title>Install: Asaph</title>
@@ -218,18 +247,19 @@ if(
 		<p>
 			Install Asaph in 3 simple steps:
 		</p>
-		
+
 		<ol>
 			<li>Edit your settings in <code>lib/asaph_config.class.php</code></li>
 			<li>Set the chmod of the <code>data/</code> directory so PHP can write to it</li>
 			<li>Enter the name and password for your first user below and click install</li>
 		</ol>
-		
+
 		<p>
-			The following is the result of a short system check. <strong>All requirements must be met in order to 
+			The following is the result of a short system check. <strong>All requirements must be met in order to
 			install Asaph.</strong>
+			Database driver: <strong><?php echo htmlspecialchars($driver); ?></strong>
 		</p>
-		
+
 		<h1>Requirements</h1>
 		<?php foreach( $requirements as $collectionTitle => $collection ) {?>
 			<div class="collection">
@@ -271,13 +301,13 @@ if(
 				<?php } ?>
 			</div>
 		<?php } ?>
-		
+
 		<a name="form"></a>
 		<?php if( $requirementsMet ) { ?>
 			<form action="install.php#form" method="post">
 				<h1>User Settings</h1>
 				<p>
-					Please enter the name and password for the admin user and click <em>Install Asaph</em> 
+					Please enter the name and password for the admin user and click <em>Install Asaph</em>
 					to create the database tables.
 				</p>
 				<?php if( isset($errors['passwords-not-equal']) ) { ?>
@@ -312,7 +342,7 @@ if(
 			Please remove this file (admin/install.php) from your server now.
 		</p>
 		<p>
-			You may head over to the <a href="<?php echo Asaph_Config::$absolutePath ?>admin/">admin menu</a> or vist 
+			You may head over to the <a href="<?php echo Asaph_Config::$absolutePath ?>admin/">admin menu</a> or vist
 			<a href="<?php echo Asaph_Config::$absolutePath ?>">your newly created Asaph-Blog</a>.
 		</p>
 	<?php } ?>
