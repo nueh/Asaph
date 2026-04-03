@@ -4,8 +4,8 @@
 
 **Asaph** is a PHP-based image bookmarking/blogging platform. Users install a browser bookmarklet, then click it on any webpage to capture an image and a link, which gets stored and displayed on the blog. It has no modern build system — it is a classic PHP application deployed directly to a web server.
 
-- **Language**: PHP 5.0+
-- **Database**: MySQL 4.0+
+- **Language**: PHP 8.0+
+- **Database**: MySQL 5.7+
 - **Frontend**: Vanilla HTML/CSS/JavaScript, no framework
 - **License**: GNU General Public License v3
 
@@ -40,7 +40,7 @@ Asaph/
 │       └── calendar.js
 ├── lib/                        # Core PHP classes
 │   ├── asaph_config.class.php  # All configuration (edit this for setup)
-│   ├── db.class.php            # MySQL database abstraction layer
+│   ├── db.class.php            # MySQL database abstraction layer (PDO)
 │   ├── asaph.class.php         # Post retrieval (frontend)
 │   ├── asaph_admin.class.php   # Auth, user/post management
 │   └── asaph_post.class.php    # Image download, thumbnail, post creation
@@ -118,9 +118,10 @@ Key settings:
 
 ## Database
 
-- Custom prepared-statement system (not PDO). Placeholders use `:1`, `:2`, etc.
+- Custom prepared-statement system built on PDO. Placeholders use `:1`, `:2`, etc.; internally resolved via `preg_replace_callback` before executing via `PDO::query`.
 - Database initialized by running `/admin/install.php` once; delete the file after use.
 - Table prefix configured via `Asaph_Config::$db['prefix']`.
+- Tables use `ENGINE=InnoDB` and `CHARSET=utf8mb4`.
 
 Example query pattern in `db.class.php`:
 ```php
@@ -157,6 +158,10 @@ To create a new theme:
 - **Templates**: Plain PHP mixed with HTML — no templating engine. Keep logic minimal in templates
 - **No namespaces**: This predates PHP namespaces; do not add them
 - **XHTML 1.0 Strict**: Frontend templates use XHTML DOCTYPE; maintain valid markup
+- **Passwords**: Use `password_hash($pass, PASSWORD_DEFAULT)` to store and `password_verify($pass, $hash)` to check. Never use `md5()` for passwords.
+- **Tokens**: Use `bin2hex(random_bytes(16))` for session/login tokens. Never use `md5(uniqid(rand()))`.
+- **Cookies**: Use the array-options form of `setcookie()` with `httponly => true` and `samesite => 'Lax'`.
+- **Database**: Use the `DB` class (PDO-backed); never call `mysql_*` or `mysqli_*` functions directly.
 
 ---
 
@@ -177,16 +182,16 @@ To create a new theme:
 4. Delete `admin/install.php` after successful install
 5. Log in at `/admin/`
 
-**Requirements**: PHP 5.0+, MySQL 4.0+, GD library, cURL (or `allow_url_fopen = On`)
+**Requirements**: PHP 8.0+, MySQL 5.7+, GD library, cURL (or `allow_url_fopen = On`)
 
 ---
 
 ## Git
 
-- Main branch: `master`
+- Main branch: `main`
 - Remote: `origin`
 - Feature branches follow `claude/<description>` naming convention
 
 When making changes:
 - Commit with clear, descriptive messages
-- Push to the designated feature branch; do not push directly to `master` without review
+- Push to the designated feature branch; do not push directly to `main` without review
