@@ -3,112 +3,119 @@
 class DB {
 	public $sql;
 	public $numQueries = 0;
-	
+
 	private $link = null;
-	private $result;
+	private $result = null;
+	private $lastError = null;
+	private $lastRowCount = 0;
 	private $host, $db, $user, $pass;
-	
-	
-	public function __construct( $host, $db, $user, $pass) {
+
+
+	public function __construct( $host, $db, $user, $pass ) {
 		$this->host = $host;
 		$this->db = $db;
 		$this->user = $user;
 		$this->pass = $pass;
 	}
-	
-	
+
+
 	private function connect() {
-		$this->link = @mysql_connect( $this->host, $this->user, $this->pass )
-			or die( "Couldn't establish link to database-server: ".$this->host );
-		mysql_select_db( $this->db )
-			or die( "Couldn't select Database: ".$this->db );
-		mysql_query( 'SET NAMES utf8', $this->link );
+		$dsn = "mysql:host={$this->host};dbname={$this->db};charset=utf8";
+		$this->link = new PDO( $dsn, $this->user, $this->pass, [
+			PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+			PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+		]);
 	}
-	
-	
+
+
 	public function foundRows() {
 		$r = $this->query( 'SELECT FOUND_ROWS() AS foundRows' );
 		return $r[0]['foundRows'];
 	}
-	
-	
+
+
 	public function numRows() {
-		return mysql_num_rows( $this->result );
+		return $this->lastRowCount;
 	}
-	
-	
+
+
 	public function affectedRows() {
-		return mysql_affected_rows( $this->result );
+		return $this->result ? $this->result->rowCount() : 0;
 	}
-	
-	
+
+
 	public function insertId() {
-		return mysql_insert_id( $this->link );
+		return $this->link ? $this->link->lastInsertId() : 0;
 	}
-	
-	
-	public function query( $q, $params = array() ) {
+
+
+	public function query( $q, $params = [] ) {
 		if( $this->link === null ) {
 			$this->connect();
 		}
-		
+
 		if( !is_array( $params ) ) {
 			$params = array_slice( func_get_args(), 1 );
 		}
-		
+
 		if( !empty( $params ) ) {
-			$q = preg_replace('/:(\d+)/e', '$this->quote($params[$1 - 1])', $q );
+			$q = preg_replace_callback( '/:(\d+)/', function( $matches ) use ( $params ) {
+				return $this->quote( $params[$matches[1] - 1] );
+			}, $q );
 		}
+
 		$this->numQueries++;
 		$this->sql = $q;
-		$this->result = mysql_query( $q, $this->link );
-		
-		if( !$this->result ) {
+		$this->lastError = null;
+
+		try {
+			$this->result = $this->link->query( $q );
+		} catch( PDOException $e ) {
+			$this->lastError = $e->getMessage();
 			return false;
 		}
-		else if( !is_resource( $this->result ) ) {
+
+		if( $this->result->columnCount() === 0 ) {
 			return true;
 		}
-		
-		$rset = array();
-		while ( $row = mysql_fetch_assoc( $this->result ) ) {
-			$rset[] = $row;
-		}
+
+		$rset = $this->result->fetchAll();
+		$this->lastRowCount = count( $rset );
 		return $rset;
 	}
-	
-	
-	public function getRow( $q, $params = array() ) {
+
+
+	public function getRow( $q, $params = [] ) {
 		if( !is_array( $params ) ) {
 			$params = array_slice( func_get_args(), 1 );
 		}
-		
+
 		$r = $this->query( $q, $params );
 		return array_shift( $r );
 	}
-	
-	
+
+
 	public function updateRow( $table, $idFields, $updateFields ) {
 		$updateString = implode( ',', $this->quoteArray( $updateFields ) );
 		$idString = implode( ' AND ', $this->quoteArray( $idFields ) );
 		return $this->query( "UPDATE $table SET $updateString WHERE $idString" );
 	}
-	
-	
+
+
 	public function insertRow( $table, $insertFields ) {
 		$insertString = implode( ',', $this->quoteArray( $insertFields ) );
 		return $this->query( "INSERT INTO $table SET $insertString" );
 	}
-	
-	
+
+
 	public function getError() {
-		if( $e = mysql_error( $this->link ) ) {
-			return "MySQL reports: '$e' on query\n".$this->sql;
+		if( $this->lastError ) {
+			return "MySQL reports: '{$this->lastError}' on query\n" . $this->sql;
 		}
 		return false;
 	}
-	
-	
+
+
 	public function quote( $s ) {
 		if( $this->link === null ) {
 			$this->connect();
@@ -123,15 +130,15 @@ class DB {
 			return $s;
 		}
 		else {
-			return "'".mysql_real_escape_string( $s )."'";
+			return $this->link->quote( $s );
 		}
 	}
-	
-	
+
+
 	public function quoteArray( &$fields ) {
-		$r = array();
+		$r = [];
 		foreach( $fields as $key => &$value ) {
-			$r[] = "`$key`=".$this->quote( $value );
+			$r[] = "`$key`=" . $this->quote( $value );
 		}
 		return $r;
 	}
