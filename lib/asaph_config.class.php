@@ -26,9 +26,14 @@ class Asaph_Config {
 	// Database settings.
 	// Set driver to 'sqlite' for a file-based database (no server required),
 	// or 'mysql' to use a MySQL/MariaDB server.
+	//
+	// SECURITY: The SQLite database file must NOT be stored inside the web
+	// root. Set 'path' to an absolute path outside the publicly served
+	// directory (e.g. '/var/db/asaph.db'). The default '../asaph.db' places
+	// it one level above the web root, which is safe on most setups.
 	public static $db = array(
 		'driver'   => 'sqlite',           // 'sqlite' or 'mysql'
-		'path'     => 'data/asaph.db',    // SQLite only: path relative to Asaph root
+		'path'     => '../asaph.db',      // SQLite only: MUST be outside web root
 
 		'host'     => 'localhost',         // MySQL only
 		'database' => 'asaph',            // MySQL only

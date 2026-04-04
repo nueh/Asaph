@@ -71,8 +71,12 @@ try {
 
 // Build requirements based on driver
 if( $driver === 'sqlite' ) {
-	$dbPath = ASAPH_PATH . (Asaph_Config::$db['path'] ?? 'data/asaph.db');
-	$dbDir  = dirname( $dbPath );
+	$dbPath    = ASAPH_PATH . (Asaph_Config::$db['path'] ?? '../asaph.db');
+	$dbDir     = dirname( $dbPath );
+	$dbRealDir = realpath( $dbDir ) ?: $dbDir;
+	$webRoot   = realpath( $_SERVER['DOCUMENT_ROOT'] ) ?: $_SERVER['DOCUMENT_ROOT'];
+	// Check whether the database directory sits inside the web root
+	$insideWebRoot = str_starts_with( $dbRealDir, $webRoot );
 	$dbRequirements = array(
 		'SQLite database directory is writeable' => array(
 			'message' => 'Make sure PHP can write to <code>'.htmlspecialchars($dbDir).'</code>. '
@@ -82,6 +86,14 @@ if( $driver === 'sqlite' ) {
 		'PDO SQLite extension installed' => array(
 			'message' => 'The <code>pdo_sqlite</code> PHP extension is required.',
 			'value' => in_array( 'sqlite', PDO::getAvailableDrivers() )
+		),
+		'Database file is outside web root' => array(
+			'message' => '<strong>Security risk:</strong> <code>'
+				. htmlspecialchars(Asaph_Config::$db['path'] ?? '../asaph.db')
+				. '</code> is inside the web root and could be downloaded directly. '
+				. 'Set <code>$db[\'path\']</code> to an absolute path outside the document root '
+				. '(e.g. <code>/var/db/asaph.db</code>).',
+			'value' => !$insideWebRoot
 		),
 	);
 } else {

@@ -27,7 +27,10 @@ To install:
    - $domain and $absolutePath (your server hostname and path)
    - $db['driver']: 'sqlite' (default) or 'mysql'
    - For MySQL: $db['host'], $db['database'], $db['user'], $db['password']
-   - For SQLite: $db['path'] (default: data/asaph.db)
+   - For SQLite: $db['path'] — must be outside the web root.
+     The default '../asaph.db' places it one level above the web root.
+     For shared hosting you may need an absolute path such as
+     /home/youruser/asaph.db.
 
 3. Make the data/ directory writable by PHP. This is where Asaph stores
    all images, thumbnails, and (if using SQLite) the database file.
